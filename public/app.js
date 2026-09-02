@@ -12,13 +12,45 @@ async function api(path, options = {}) {
   return body;
 }
 
-function fmtTime(ts) {
-  if (!ts) return '';
-  return new Date(ts).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+function fmtDate(iso) {
+  if (!iso) return 'Never';
+  return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 function navigate(hash) {
   window.location.hash = hash;
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function stalePill(listing) {
+  return listing.lastRefreshedAt
+    ? `<span class="stale-pill">Refreshed ${fmtDate(listing.lastRefreshedAt)}</span>`
+    : `<span class="stale-pill never">Never refreshed</span>`;
+}
+
+function tagPills(tags, cls = '') {
+  return tags.map((t) => `<span class="tag-pill ${cls}">${escapeHtml(t)}</span>`).join('');
+}
+
+// First line of a description is what shows in Etsy search results — the rest is
+// preserved as-is when a rewrite is saved back.
+function splitDescription(description) {
+  const text = description || '';
+  const idx = text.indexOf('\n');
+  if (idx === -1) return { firstLine: text, rest: '' };
+  return { firstLine: text.slice(0, idx), rest: text.slice(idx + 1) };
+}
+
+async function seasonalBannerHtml() {
+  try {
+    const { keywords } = await api('/api/seasonal');
+    return `<div class="seasonal-banner"><strong>This month's angle:</strong> ${keywords.map(escapeHtml).join(' · ')} — weave one of these into titles, tags or first lines while it's relevant.</div>`;
+  } catch (err) {
+    return '';
+  }
 }
 
 window.addEventListener('hashchange', route);
@@ -26,327 +58,371 @@ window.addEventListener('DOMContentLoaded', route);
 
 function route() {
   const hash = window.location.hash || '#/';
-  const jobMatch = hash.match(/^#\/job\/(.+)$/);
-  if (jobMatch) {
-    renderJob(jobMatch[1]);
-  } else if (hash === '#/new-property') {
-    renderNewProperty();
+  const refreshMatch = hash.match(/^#\/refresh\/(.+)$/);
+
+  let activeTab = hash;
+  if (refreshMatch) activeTab = '/listings';
+
+  document.querySelectorAll('.tabs a').forEach((a) => {
+    a.classList.toggle('active', a.dataset.tab === activeTab.replace(/^#/, ''));
+  });
+
+  if (refreshMatch) {
+    renderRefreshWorkspace(refreshMatch[1]);
+  } else if (hash === '#/listings') {
+    renderListings();
+  } else if (hash === '#/rewrite') {
+    renderRewriteTool();
   } else {
-    renderHome();
+    renderQueue();
   }
 }
 
-// ---------- Home ----------
+// ---------- This week's queue ----------
 
-async function renderHome() {
-  appEl.innerHTML = `<div class="card"><p class="meta">Loading properties…</p></div>`;
-  let properties;
+async function renderQueue() {
+  appEl.innerHTML = `<div class="card"><p class="meta">Loading this week's queue…</p></div>`;
+  let queue, banner;
   try {
-    properties = await api('/api/properties');
+    [queue, banner] = await Promise.all([api('/api/queue'), seasonalBannerHtml()]);
   } catch (err) {
-    appEl.innerHTML = `<div class="card"><p class="error">${err.message}</p></div>`;
+    appEl.innerHTML = `<div class="card"><p class="error">${escapeHtml(err.message)}</p></div>`;
     return;
   }
 
-  const cards = properties
-    .map(
-      (p) => `
+  const total = queue.listings.length;
+  const pct = total ? Math.round((queue.refreshedCount / total) * 100) : 0;
+
+  if (total === 0) {
+    appEl.innerHTML = `
+      ${banner}
       <div class="card">
-        <h2>${escapeHtml(p.name)}</h2>
-        <p class="meta">${escapeHtml(p.address)}</p>
-        <p class="meta">Host: ${escapeHtml(p.hostName || '—')} · ${escapeHtml(p.hostEmail)}</p>
-        <p class="meta">${p.checklist.length} checklist items</p>
-        <div class="field" style="margin-top:10px;">
-          <label>Cleaner name</label>
-          <input type="text" class="cleaner-name" placeholder="Your name" />
+        <h2>No listings yet</h2>
+        <p class="meta">Add your listings and a weekly queue of the 5 stalest ones will show up here.</p>
+        <button class="btn block" id="go-listings">Add listings</button>
+      </div>
+    `;
+    document.getElementById('go-listings').addEventListener('click', () => navigate('#/listings'));
+    return;
+  }
+
+  const cards = queue.listings
+    .map(
+      (l) => `
+      <div class="card">
+        <div class="spread">
+          <h2>${escapeHtml(l.title)}</h2>
+          ${stalePill(l)}
         </div>
-        <button class="btn block start-btn" data-property="${p.id}">Start changeover</button>
-        <p class="error start-error" data-property-error="${p.id}"></p>
+        <p class="meta">${escapeHtml(l.category || 'Uncategorised')} · ${l.tags.length} tags</p>
+        <div class="row wrap" style="margin: 8px 0;">${tagPills(l.tags)}</div>
+        <button class="btn block" data-refresh="${l.id}">Refresh this listing</button>
       </div>
     `
     )
     .join('');
 
   appEl.innerHTML = `
-    ${cards || '<div class="card"><p class="meta">No properties yet — add one to get started.</p></div>'}
+    ${banner}
     <div class="card">
-      <button class="btn secondary block" id="add-property-btn">+ Add a property</button>
+      <h2>Week ${queue.week.split('-W')[1]} queue</h2>
+      <p class="meta">${queue.refreshedCount} of ${total} refreshed this week</p>
+      <div class="progress-bar"><div style="width:${pct}%"></div></div>
+      ${total > 0 && queue.refreshedCount === total ? '<p class="success" style="margin-top:10px;">All caught up for this week. New picks land next week.</p>' : ''}
     </div>
+    ${cards}
   `;
 
-  document.getElementById('add-property-btn').addEventListener('click', () => navigate('#/new-property'));
+  appEl.querySelectorAll('[data-refresh]').forEach((btn) => {
+    btn.addEventListener('click', () => navigate(`#/refresh/${btn.dataset.refresh}`));
+  });
+}
 
-  appEl.querySelectorAll('.start-btn').forEach((btn) => {
+// ---------- All listings ----------
+
+async function renderListings() {
+  appEl.innerHTML = `<div class="card"><p class="meta">Loading listings…</p></div>`;
+  let listings;
+  try {
+    listings = await api('/api/listings');
+  } catch (err) {
+    appEl.innerHTML = `<div class="card"><p class="error">${escapeHtml(err.message)}</p></div>`;
+    return;
+  }
+
+  const rows = listings
+    .map(
+      (l) => `
+      <div class="card">
+        <div class="spread">
+          <h2>${escapeHtml(l.title)}</h2>
+          ${stalePill(l)}
+        </div>
+        <p class="meta">${escapeHtml(l.category || 'Uncategorised')} · created ${fmtDate(l.createdAt)}</p>
+        <div class="row wrap" style="margin: 8px 0;">${tagPills(l.tags)}</div>
+        <div class="row">
+          <button class="btn small" data-refresh="${l.id}">Refresh</button>
+          <button class="link-btn" data-delete="${l.id}">Delete</button>
+        </div>
+      </div>
+    `
+    )
+    .join('');
+
+  appEl.innerHTML = `
+    <div class="card">
+      <h2>Add a listing</h2>
+      <p class="meta">Paste in what's live on Etsy today — you'll rewrite it later from the queue or right here.</p>
+      <div class="field">
+        <label>Title</label>
+        <input type="text" id="f-title" placeholder="e.g. Personalised Dog Mum Sweatshirt" />
+      </div>
+      <div class="field">
+        <label>Tags (comma-separated)</label>
+        <input type="text" id="f-tags" placeholder="dog mum gift, personalised jumper, ..." />
+      </div>
+      <div class="field">
+        <label>Description</label>
+        <textarea id="f-description" placeholder="First line matters most — it's what shows in search."></textarea>
+      </div>
+      <div class="field">
+        <label>Category (optional)</label>
+        <input type="text" id="f-category" placeholder="e.g. Apparel" />
+      </div>
+      <p class="error" id="f-error"></p>
+      <button class="btn block" id="f-save">Save listing</button>
+    </div>
+    ${rows || '<div class="card"><p class="meta">No listings yet.</p></div>'}
+  `;
+
+  document.getElementById('f-save').addEventListener('click', async () => {
+    const title = document.getElementById('f-title').value.trim();
+    const tags = document.getElementById('f-tags').value;
+    const description = document.getElementById('f-description').value.trim();
+    const category = document.getElementById('f-category').value.trim();
+    const errorEl = document.getElementById('f-error');
+    errorEl.textContent = '';
+    if (!title) {
+      errorEl.textContent = 'Title is required.';
+      return;
+    }
+    try {
+      await api('/api/listings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title, tags, description, category }),
+      });
+      renderListings();
+    } catch (err) {
+      errorEl.textContent = err.message;
+    }
+  });
+
+  appEl.querySelectorAll('[data-refresh]').forEach((btn) => {
+    btn.addEventListener('click', () => navigate(`#/refresh/${btn.dataset.refresh}`));
+  });
+
+  appEl.querySelectorAll('[data-delete]').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const propertyId = btn.dataset.property;
-      const card = btn.closest('.card');
-      const cleanerName = card.querySelector('.cleaner-name').value.trim();
-      const errorEl = card.querySelector('.start-error');
-      errorEl.textContent = '';
-      if (!cleanerName) {
-        errorEl.textContent = 'Enter the cleaner name to start.';
-        return;
-      }
-      btn.disabled = true;
-      btn.textContent = 'Starting…';
+      if (!confirm('Delete this listing?')) return;
       try {
-        const job = await api('/api/jobs', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ propertyId, cleanerName }),
-        });
-        navigate(`#/job/${job.id}`);
+        await api(`/api/listings/${btn.dataset.delete}`, { method: 'DELETE' });
+        renderListings();
       } catch (err) {
-        errorEl.textContent = err.message;
-        btn.disabled = false;
-        btn.textContent = 'Start changeover';
+        alert(err.message);
       }
     });
   });
 }
 
-// ---------- New property ----------
+// ---------- Standalone rewrite tool ----------
 
-function renderNewProperty() {
+function rewriteResultHtml(original, rewrite) {
+  return `
+    <div class="card">
+      <h2>Suggested rewrite</h2>
+      <div class="compare">
+        <div class="compare-col">
+          <h4>Original title</h4>
+          <div class="text-block">${escapeHtml(original.title)}</div>
+        </div>
+        <div class="compare-col after">
+          <h4>Rewritten title</h4>
+          <div class="text-block">${escapeHtml(rewrite.title)}</div>
+        </div>
+      </div>
+      <div class="compare" style="margin-top:12px;">
+        <div class="compare-col">
+          <h4>Original tags</h4>
+          <div class="text-block">${tagPills(original.tags) || '<span class="meta">None</span>'}</div>
+        </div>
+        <div class="compare-col after">
+          <h4>Rewritten tags</h4>
+          <div class="text-block">${tagPills(rewrite.tags, 'new')}</div>
+        </div>
+      </div>
+      <div class="compare" style="margin-top:12px;">
+        <div class="compare-col">
+          <h4>Original first line</h4>
+          <div class="text-block">${escapeHtml(splitDescription(original.description).firstLine) || '<span class="meta">None</span>'}</div>
+        </div>
+        <div class="compare-col after">
+          <h4>Rewritten first line</h4>
+          <div class="text-block">${escapeHtml(rewrite.firstLine)}</div>
+        </div>
+      </div>
+      <div class="seasonal-banner" style="margin-top:14px;">
+        <strong>Seasonal keyword prompts:</strong> ${rewrite.seasonalKeywords.map(escapeHtml).join(' · ')}
+      </div>
+    </div>
+  `;
+}
+
+async function renderRewriteTool() {
   appEl.innerHTML = `
     <div class="card">
-      <h2>Add a property</h2>
-      <p class="meta">Set up the checklist once — every changeover reuses it.</p>
+      <h2>Rewrite tool</h2>
+      <p class="meta">Paste any listing — saved or not — and get a rewritten title, tags and opening line back.</p>
       <div class="field">
-        <label>Property name</label>
-        <input type="text" id="f-name" placeholder="e.g. Riverside Loft" />
+        <label>Title</label>
+        <input type="text" id="f-title" placeholder="Paste the current listing title" />
       </div>
       <div class="field">
-        <label>Address</label>
-        <input type="text" id="f-address" placeholder="Street, city, postcode" />
+        <label>Tags (comma-separated)</label>
+        <input type="text" id="f-tags" placeholder="Paste the current tags" />
       </div>
       <div class="field">
-        <label>Host name</label>
-        <input type="text" id="f-hostname" placeholder="e.g. Priya Shah" />
-      </div>
-      <div class="field">
-        <label>Host email (report goes here)</label>
-        <input type="email" id="f-hostemail" placeholder="host@example.com" />
-      </div>
-      <div class="field">
-        <label>Checklist — one item per line</label>
-        <textarea id="f-checklist" class="checklist-input" placeholder="Kitchen surfaces wiped\nBathroom cleaned\nBeds made with fresh linen"></textarea>
+        <label>Description</label>
+        <textarea id="f-description" placeholder="Paste the current description"></textarea>
       </div>
       <p class="error" id="f-error"></p>
+      <button class="btn block" id="f-generate">Generate rewrite</button>
+    </div>
+    <div id="result"></div>
+  `;
+
+  document.getElementById('f-generate').addEventListener('click', async () => {
+    const title = document.getElementById('f-title').value.trim();
+    const tags = document.getElementById('f-tags').value;
+    const description = document.getElementById('f-description').value.trim();
+    const errorEl = document.getElementById('f-error');
+    errorEl.textContent = '';
+    if (!title) {
+      errorEl.textContent = 'Title is required.';
+      return;
+    }
+
+    const btn = document.getElementById('f-generate');
+    btn.disabled = true;
+    btn.textContent = 'Generating…';
+    try {
+      const rewrite = await api('/api/rewrite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title, tags, description }),
+      });
+      const resultEl = document.getElementById('result');
+      resultEl.innerHTML =
+        rewriteResultHtml({ title, tags: tags.split(',').map((t) => t.trim()).filter(Boolean), description }, rewrite) +
+        `<div class="card"><button class="btn secondary block" id="save-as-listing">Save as a new listing</button></div>`;
+
+      document.getElementById('save-as-listing').addEventListener('click', async () => {
+        const { rest } = splitDescription(description);
+        const newDescription = rest ? `${rewrite.firstLine}\n${rest}` : rewrite.firstLine;
+        try {
+          const listing = await api('/api/listings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title: rewrite.title, tags: rewrite.tags, description: newDescription }),
+          });
+          await api(`/api/listings/${listing.id}/refresh`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title: rewrite.title, tags: rewrite.tags, description: newDescription }),
+          });
+          navigate('#/listings');
+        } catch (err) {
+          alert(err.message);
+        }
+      });
+    } catch (err) {
+      errorEl.textContent = err.message;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Generate rewrite';
+    }
+  });
+}
+
+// ---------- Refresh workspace for a saved listing ----------
+
+async function renderRefreshWorkspace(id) {
+  appEl.innerHTML = `<div class="card"><p class="meta">Loading listing…</p></div>`;
+  let listing, rewrite;
+  try {
+    listing = await api(`/api/listings/${id}`);
+    rewrite = await api('/api/rewrite', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: listing.title, tags: listing.tags, description: listing.description }),
+    });
+  } catch (err) {
+    appEl.innerHTML = `<div class="card"><p class="error">${escapeHtml(err.message)}</p></div>`;
+    return;
+  }
+
+  const { rest } = splitDescription(listing.description);
+  const composedDescription = rest ? `${rewrite.firstLine}\n${rest}` : rewrite.firstLine;
+
+  appEl.innerHTML = `
+    <div class="card">
+      <h2>Refresh: ${escapeHtml(listing.title)}</h2>
+      <p class="meta">${listing.lastRefreshedAt ? `Last refreshed ${fmtDate(listing.lastRefreshedAt)}` : 'Never refreshed'}</p>
+    </div>
+    ${rewriteResultHtml(listing, rewrite)}
+    <div class="card">
+      <h2>Save this refresh</h2>
+      <p class="meta">Tweak anything below before saving — this becomes the listing's new title, tags and description.</p>
+      <div class="field">
+        <label>Title</label>
+        <input type="text" id="e-title" value="${escapeHtml(rewrite.title)}" />
+      </div>
+      <div class="field">
+        <label>Tags (comma-separated)</label>
+        <input type="text" id="e-tags" value="${escapeHtml(rewrite.tags.join(', '))}" />
+      </div>
+      <div class="field">
+        <label>Description</label>
+        <textarea id="e-description">${escapeHtml(composedDescription)}</textarea>
+      </div>
+      <p class="error" id="e-error"></p>
       <div class="row">
-        <button class="btn" id="f-save">Save property</button>
-        <button class="btn secondary" id="f-cancel">Cancel</button>
+        <button class="btn" id="e-save">Save refresh</button>
+        <button class="btn secondary" id="e-cancel">Cancel</button>
       </div>
     </div>
   `;
 
-  document.getElementById('f-cancel').addEventListener('click', () => navigate('#/'));
-  document.getElementById('f-save').addEventListener('click', async () => {
-    const name = document.getElementById('f-name').value.trim();
-    const address = document.getElementById('f-address').value.trim();
-    const hostName = document.getElementById('f-hostname').value.trim();
-    const hostEmail = document.getElementById('f-hostemail').value.trim();
-    const checklist = document
-      .getElementById('f-checklist')
-      .value.split('\n')
-      .map((l) => l.trim())
-      .filter(Boolean);
-    const errorEl = document.getElementById('f-error');
+  document.getElementById('e-cancel').addEventListener('click', () => navigate('#/'));
+  document.getElementById('e-save').addEventListener('click', async () => {
+    const title = document.getElementById('e-title').value.trim();
+    const tags = document.getElementById('e-tags').value;
+    const description = document.getElementById('e-description').value.trim();
+    const errorEl = document.getElementById('e-error');
     errorEl.textContent = '';
-
+    if (!title) {
+      errorEl.textContent = 'Title is required.';
+      return;
+    }
     try {
-      await api('/api/properties', {
+      await api(`/api/listings/${id}/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, address, hostName, hostEmail, checklist }),
+        body: JSON.stringify({ title, tags, description }),
       });
       navigate('#/');
     } catch (err) {
       errorEl.textContent = err.message;
     }
   });
-}
-
-// ---------- Job (checklist) ----------
-
-async function renderJob(jobId) {
-  appEl.innerHTML = `<div class="card"><p class="meta">Loading job…</p></div>`;
-  let job, property;
-  try {
-    job = await api(`/api/jobs/${jobId}`);
-    property = await api(`/api/properties/${job.propertyId}`);
-  } catch (err) {
-    appEl.innerHTML = `<div class="card"><p class="error">${err.message}</p></div>`;
-    return;
-  }
-
-  if (job.status === 'completed') {
-    renderCompleted(job, property);
-    return;
-  }
-
-  const doneCount = job.items.filter((i) => i.done && i.afterPhoto).length;
-  const pct = Math.round((doneCount / job.items.length) * 100);
-
-  appEl.innerHTML = `
-    <div class="card">
-      <h2>${escapeHtml(property.name)}</h2>
-      <p class="meta">${escapeHtml(property.address)}</p>
-      <p class="meta">Cleaner: ${escapeHtml(job.cleanerName)} · Started ${fmtTime(job.startedAt)}</p>
-      <div class="progress-bar"><div style="width:${pct}%"></div></div>
-      <p class="meta">${doneCount} / ${job.items.length} items complete</p>
-    </div>
-    <div id="items"></div>
-    <div class="card">
-      <button class="btn block" id="complete-btn" ${doneCount === job.items.length ? '' : 'disabled'}>
-        Complete &amp; send report to host
-      </button>
-      <p class="error" id="complete-error"></p>
-    </div>
-  `;
-
-  const itemsEl = document.getElementById('items');
-  job.items.forEach((item, index) => {
-    itemsEl.appendChild(renderItem(job.id, item, index));
-  });
-
-  document.getElementById('complete-btn').addEventListener('click', async () => {
-    const btn = document.getElementById('complete-btn');
-    const errorEl = document.getElementById('complete-error');
-    errorEl.textContent = '';
-    btn.disabled = true;
-    btn.textContent = 'Generating report…';
-    try {
-      const completed = await api(`/api/jobs/${job.id}/complete`, { method: 'POST' });
-      renderCompleted(completed, property);
-    } catch (err) {
-      errorEl.textContent = err.message;
-      btn.disabled = false;
-      btn.textContent = 'Complete & send report to host';
-    }
-  });
-}
-
-function renderItem(jobId, item, index) {
-  const wrap = document.createElement('div');
-  wrap.className = `checklist-item ${item.done ? 'done' : ''}`;
-  wrap.innerHTML = `
-    <div class="spread">
-      <h3>${index + 1}. ${escapeHtml(item.name)}</h3>
-      <span class="badge ${item.done ? 'done' : 'pending'}">${item.done ? 'Done' : 'Pending'}</span>
-    </div>
-    <div class="photo-row">
-      ${photoSlot('before', item.beforePhotoUrl, item.beforePhotoAt)}
-      ${photoSlot('after', item.afterPhotoUrl, item.afterPhotoAt)}
-    </div>
-    <div class="field">
-      <label>Notes (optional)</label>
-      <input type="text" class="notes-input" value="${escapeAttr(item.notes || '')}" placeholder="Anything the host should know" />
-    </div>
-    <label class="row" style="cursor:pointer;">
-      <input type="checkbox" class="done-checkbox" ${item.done ? 'checked' : ''} />
-      Mark as done
-    </label>
-    <p class="error item-error"></p>
-  `;
-
-  ['before', 'after'].forEach((type) => {
-    const input = wrap.querySelector(`input[data-type="${type}"]`);
-    input.addEventListener('change', async () => {
-      const file = input.files[0];
-      if (!file) return;
-      const errorEl = wrap.querySelector('.item-error');
-      errorEl.textContent = '';
-      const form = new FormData();
-      form.append('photo', file);
-      form.append('type', type);
-      try {
-        await api(`/api/jobs/${jobId}/items/${index}/photo`, { method: 'POST', body: form });
-        renderJob(jobId);
-      } catch (err) {
-        errorEl.textContent = err.message;
-      }
-    });
-  });
-
-  const notesInput = wrap.querySelector('.notes-input');
-  notesInput.addEventListener('change', () => {
-    patchItem(jobId, index, { notes: notesInput.value });
-  });
-
-  const doneCheckbox = wrap.querySelector('.done-checkbox');
-  doneCheckbox.addEventListener('change', async () => {
-    const errorEl = wrap.querySelector('.item-error');
-    if (doneCheckbox.checked && !item.afterPhoto) {
-      errorEl.textContent = 'Add an "after" photo before marking this done.';
-      doneCheckbox.checked = false;
-      return;
-    }
-    await patchItem(jobId, index, { done: doneCheckbox.checked });
-    renderJob(jobId);
-  });
-
-  return wrap;
-}
-
-async function patchItem(jobId, index, payload) {
-  try {
-    await api(`/api/jobs/${jobId}/items/${index}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-  } catch (err) {
-    console.error(err);
-  }
-}
-
-function photoSlot(type, url, at) {
-  const label = type === 'before' ? 'Before' : 'After';
-  const image = url
-    ? `<img src="${url}" alt="${label} photo" />`
-    : `<div class="placeholder">Tap to add</div>`;
-  const stamp = at ? `<p class="meta" style="font-size:11px;">${fmtTime(at)}</p>` : '';
-  return `
-    <div class="photo-slot">
-      <label style="cursor:pointer;">
-        ${image}
-        <label>${label}</label>
-        <input type="file" accept="image/*" capture="environment" data-type="${type}" />
-      </label>
-      ${stamp}
-    </div>
-  `;
-}
-
-function renderCompleted(job, property) {
-  appEl.innerHTML = `
-    <div class="card success">
-      <h2>Report sent ✅</h2>
-      <p class="meta">${escapeHtml(property.name)} · ${escapeHtml(job.cleanerName)}</p>
-      <p class="meta">Completed ${fmtTime(job.completedAt)}</p>
-      ${
-        job.emailSent
-          ? `<p>The timestamped PDF report was emailed to <strong>${escapeHtml(property.hostEmail)}</strong>.</p>`
-          : `<p>Report generated. Email delivery isn't configured on this server, so download it below and forward it to <strong>${escapeHtml(
-              property.hostEmail
-            )}</strong> yourself.</p>`
-      }
-      <a class="btn block" href="${job.pdfUrl}" target="_blank" rel="noopener">View / download PDF report</a>
-    </div>
-    <div class="card">
-      <button class="btn secondary block" id="back-home">Back to properties</button>
-    </div>
-  `;
-  document.getElementById('back-home').addEventListener('click', () => navigate('#/'));
-}
-
-// ---------- utils ----------
-
-function escapeHtml(str) {
-  return String(str).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-}
-
-function escapeAttr(str) {
-  return escapeHtml(str);
 }

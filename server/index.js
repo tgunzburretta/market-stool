@@ -1,236 +1,133 @@
 const path = require('path');
-const fs = require('fs');
 const crypto = require('crypto');
 const express = require('express');
-const multer = require('multer');
-const { v4: uuidv4 } = require('uuid');
 
 const db = require('./db');
-const { generateJobPdf } = require('./pdf');
-const { sendReport } = require('./mailer');
+const { buildRewrite, seasonalKeywordsFor } = require('./rewrite');
+const { getQueue } = require('./queue');
 
-const ROOT = path.join(__dirname, '..');
-const UPLOADS_DIR = path.join(ROOT, 'uploads');
-const REPORTS_DIR = path.join(ROOT, 'reports');
-const PUBLIC_DIR = path.join(ROOT, 'public');
+const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 
 const app = express();
 app.use(express.json());
-app.use('/uploads', express.static(UPLOADS_DIR));
 app.use(express.static(PUBLIC_DIR));
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const jobDir = path.join(UPLOADS_DIR, req.params.id);
-    fs.mkdirSync(jobDir, { recursive: true });
-    cb(null, jobDir);
-  },
-  filename: (req, file, cb) => {
-    const type = req.body.type === 'before' ? 'before' : 'after';
-    const ext = path.extname(file.originalname) || '.jpg';
-    cb(null, `${req.params.index}-${type}-${Date.now()}${ext}`);
-  },
-});
-const upload = multer({
-  storage,
-  limits: { fileSize: 10 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => {
-    if (!file.mimetype.startsWith('image/')) {
-      return cb(new Error('Only image uploads are allowed'));
-    }
-    cb(null, true);
-  },
-});
-
-function findProperty(dbData, id) {
-  return dbData.properties.find((p) => p.id === id);
+function findListing(data, id) {
+  return data.listings.find((l) => l.id === id);
 }
 
-function findJob(dbData, id) {
-  return dbData.jobs.find((j) => j.id === id);
+function normalizeTags(tags) {
+  if (Array.isArray(tags)) return tags.map((t) => String(t).trim()).filter(Boolean);
+  if (typeof tags === 'string') return tags.split(',').map((t) => t.trim()).filter(Boolean);
+  return [];
 }
 
-// --- Properties ---
+// --- Listings ---
 
-app.get('/api/properties', (req, res) => {
+app.get('/api/listings', (req, res) => {
   const data = db.load();
-  res.json(data.properties);
+  res.json(data.listings);
 });
 
-app.get('/api/properties/:id', (req, res) => {
+app.get('/api/listings/:id', (req, res) => {
   const data = db.load();
-  const property = findProperty(data, req.params.id);
-  if (!property) return res.status(404).json({ error: 'Property not found' });
-  res.json(property);
+  const listing = findListing(data, req.params.id);
+  if (!listing) return res.status(404).json({ error: 'Listing not found' });
+  res.json(listing);
 });
 
-app.post('/api/properties', (req, res) => {
-  const { name, address, hostName, hostEmail, checklist } = req.body || {};
-  if (!name || !address || !hostEmail) {
-    return res.status(400).json({ error: 'name, address and hostEmail are required' });
-  }
-  if (!Array.isArray(checklist) || checklist.length === 0) {
-    return res.status(400).json({ error: 'checklist must be a non-empty array of item names' });
+app.post('/api/listings', (req, res) => {
+  const { title, tags, description, category } = req.body || {};
+  if (!title || !title.trim()) {
+    return res.status(400).json({ error: 'title is required' });
   }
 
   const data = db.load();
-  const property = {
-    id: `prop_${crypto.randomBytes(6).toString('hex')}`,
-    name,
-    address,
-    hostName: hostName || '',
-    hostEmail,
-    checklist: checklist.filter((item) => typeof item === 'string' && item.trim().length > 0),
+  const listing = {
+    id: `lst_${crypto.randomBytes(6).toString('hex')}`,
+    title: title.trim(),
+    tags: normalizeTags(tags),
+    description: description ? String(description).trim() : '',
+    category: category ? String(category).trim() : '',
+    createdAt: new Date().toISOString(),
+    lastRefreshedAt: null,
   };
-  data.properties.push(property);
+  data.listings.push(listing);
   db.save(data);
-  res.status(201).json(property);
+  res.status(201).json(listing);
 });
 
-// --- Jobs (changeovers) ---
+app.put('/api/listings/:id', (req, res) => {
+  const data = db.load();
+  const listing = findListing(data, req.params.id);
+  if (!listing) return res.status(404).json({ error: 'Listing not found' });
 
-app.post('/api/jobs', (req, res) => {
-  const { propertyId, cleanerName } = req.body || {};
-  if (!propertyId || !cleanerName) {
-    return res.status(400).json({ error: 'propertyId and cleanerName are required' });
+  const { title, tags, description, category } = req.body || {};
+  if (typeof title === 'string' && title.trim()) listing.title = title.trim();
+  if (tags !== undefined) listing.tags = normalizeTags(tags);
+  if (typeof description === 'string') listing.description = description.trim();
+  if (typeof category === 'string') listing.category = category.trim();
+
+  db.save(data);
+  res.json(listing);
+});
+
+app.delete('/api/listings/:id', (req, res) => {
+  const data = db.load();
+  const index = data.listings.findIndex((l) => l.id === req.params.id);
+  if (index === -1) return res.status(404).json({ error: 'Listing not found' });
+  data.listings.splice(index, 1);
+  db.save(data);
+  res.status(204).end();
+});
+
+// Applies an accepted rewrite to a listing and marks it refreshed for this week.
+app.post('/api/listings/:id/refresh', (req, res) => {
+  const data = db.load();
+  const listing = findListing(data, req.params.id);
+  if (!listing) return res.status(404).json({ error: 'Listing not found' });
+
+  const { title, tags, description } = req.body || {};
+  if (typeof title === 'string' && title.trim()) listing.title = title.trim();
+  if (tags !== undefined) listing.tags = normalizeTags(tags);
+  if (typeof description === 'string' && description.trim()) listing.description = description.trim();
+  listing.lastRefreshedAt = new Date().toISOString();
+
+  db.save(data);
+  res.json(listing);
+});
+
+// --- Rewrite tool (works on any pasted listing, saved or not) ---
+
+app.post('/api/rewrite', (req, res) => {
+  const { title, tags, description } = req.body || {};
+  if (!title || !String(title).trim()) {
+    return res.status(400).json({ error: 'title is required' });
   }
+  const rewrite = buildRewrite({ title, tags: normalizeTags(tags), description });
+  res.json(rewrite);
+});
 
+app.get('/api/seasonal', (req, res) => {
+  res.json({ keywords: seasonalKeywordsFor(new Date()) });
+});
+
+// --- Weekly refresh queue ---
+
+app.get('/api/queue', (req, res) => {
   const data = db.load();
-  const property = findProperty(data, propertyId);
-  if (!property) return res.status(404).json({ error: 'Property not found' });
-
-  const job = {
-    id: uuidv4(),
-    propertyId,
-    cleanerName,
-    status: 'in_progress',
-    startedAt: Date.now(),
-    completedAt: null,
-    pdfUrl: null,
-    emailSent: false,
-    emailNote: null,
-    items: property.checklist.map((name) => ({
-      name,
-      done: false,
-      notes: '',
-      beforePhoto: null,
-      beforePhotoUrl: null,
-      beforePhotoAt: null,
-      afterPhoto: null,
-      afterPhotoUrl: null,
-      afterPhotoAt: null,
-    })),
-  };
-
-  data.jobs.push(job);
+  const queue = getQueue(data);
   db.save(data);
-  res.status(201).json(job);
-});
 
-app.get('/api/jobs/:id', (req, res) => {
-  const data = db.load();
-  const job = findJob(data, req.params.id);
-  if (!job) return res.status(404).json({ error: 'Job not found' });
-  res.json(job);
-});
+  const listings = queue.listingIds.map((id) => findListing(data, id)).filter(Boolean);
+  const refreshedCount = listings.filter(
+    (l) => l.lastRefreshedAt && l.lastRefreshedAt >= queue.generatedAt
+  ).length;
 
-app.post('/api/jobs/:id/items/:index/photo', (req, res) => {
-  const data = db.load();
-  const job = findJob(data, req.params.id);
-  if (!job) return res.status(404).json({ error: 'Job not found' });
-  if (job.status === 'completed') return res.status(400).json({ error: 'Job already completed' });
-
-  const index = Number(req.params.index);
-  const item = job.items[index];
-  if (!item) return res.status(404).json({ error: 'Checklist item not found' });
-
-  upload.single('photo')(req, res, (err) => {
-    if (err) return res.status(400).json({ error: err.message });
-    if (!req.file) return res.status(400).json({ error: 'photo file is required' });
-
-    const type = req.body.type === 'before' ? 'before' : 'after';
-    const relPath = path.relative(ROOT, req.file.path);
-    const url = `/uploads/${req.params.id}/${req.file.filename}`;
-
-    if (type === 'before') {
-      item.beforePhoto = relPath;
-      item.beforePhotoUrl = url;
-      item.beforePhotoAt = Date.now();
-    } else {
-      item.afterPhoto = relPath;
-      item.afterPhotoUrl = url;
-      item.afterPhotoAt = Date.now();
-    }
-
-    db.save(data);
-    res.json(item);
-  });
-});
-
-app.patch('/api/jobs/:id/items/:index', (req, res) => {
-  const data = db.load();
-  const job = findJob(data, req.params.id);
-  if (!job) return res.status(404).json({ error: 'Job not found' });
-  if (job.status === 'completed') return res.status(400).json({ error: 'Job already completed' });
-
-  const index = Number(req.params.index);
-  const item = job.items[index];
-  if (!item) return res.status(404).json({ error: 'Checklist item not found' });
-
-  const { done, notes } = req.body || {};
-  if (typeof done === 'boolean') item.done = done;
-  if (typeof notes === 'string') item.notes = notes;
-
-  db.save(data);
-  res.json(item);
-});
-
-app.post('/api/jobs/:id/complete', async (req, res) => {
-  const data = db.load();
-  const job = findJob(data, req.params.id);
-  if (!job) return res.status(404).json({ error: 'Job not found' });
-  if (job.status === 'completed') return res.status(400).json({ error: 'Job already completed' });
-
-  const property = findProperty(data, job.propertyId);
-  if (!property) return res.status(404).json({ error: 'Property not found' });
-
-  const incomplete = job.items.filter((item) => !item.done || !item.afterPhoto);
-  if (incomplete.length > 0) {
-    return res.status(400).json({
-      error: 'All items need an after photo and must be marked done before completing the job',
-      incomplete: incomplete.map((i) => i.name),
-    });
-  }
-
-  job.completedAt = Date.now();
-
-  fs.mkdirSync(REPORTS_DIR, { recursive: true });
-  const pdfPath = path.join(REPORTS_DIR, `${job.id}.pdf`);
-  await generateJobPdf(job, property, pdfPath);
-
-  job.status = 'completed';
-  job.pdfUrl = `/api/jobs/${job.id}/pdf`;
-
-  try {
-    const result = await sendReport({ toEmail: property.hostEmail, propertyName: property.name, pdfPath });
-    job.emailSent = result.sent;
-    job.emailNote = result.reason || null;
-  } catch (err) {
-    job.emailSent = false;
-    job.emailNote = `Email send failed: ${err.message}`;
-  }
-
-  db.save(data);
-  res.json(job);
-});
-
-app.get('/api/jobs/:id/pdf', (req, res) => {
-  const pdfPath = path.join(REPORTS_DIR, `${req.params.id}.pdf`);
-  if (!fs.existsSync(pdfPath)) return res.status(404).json({ error: 'Report not generated yet' });
-  res.sendFile(pdfPath);
+  res.json({ week: queue.week, generatedAt: queue.generatedAt, listings, refreshedCount });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`CleanProof running on http://localhost:${PORT}`);
+  console.log(`Listing refresher running on http://localhost:${PORT}`);
 });

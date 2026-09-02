@@ -1,20 +1,24 @@
-# CleanProof — turnaround proof for short-let cleaners
+# Listing Refresh — Etsy & print-on-demand listing refresher
 
-**Niche:** cleaners servicing Airbnb/short-let hosts.
-**Problem:** disputes over "it wasn't cleaned properly" with no evidence either way.
-**MVP:** per-property checklist → before/after photo capture per item → timestamped PDF report generated and (optionally) emailed to the host the moment the job is marked complete.
-**Trigger:** every changeover — several a week per cleaner.
-**Pricing idea:** £6/mo per cleaner, or £15/mo per property for the host.
+**Niche:** Etsy/POD sellers with 20–200 listings.
+**Problem:** listings stagnate — rewriting titles and tags by hand is the job nobody does.
+**MVP:** paste a listing, get a rewritten title/tags/first line back, plus seasonal keyword prompts and a weekly queue that surfaces the 5 stalest listings.
+**Trigger:** the queue — a fresh 5 to touch every week.
+**Pricing idea:** £9/mo.
+
+This is deliberately narrower than a research tool like eRank: it doesn't tell you what to research, it does the rewriting and tells you which five listings to touch this week.
 
 ## How it works
 
-1. A host or cleaner adds a **property** once, with its cleaning checklist and the host's email.
-2. At each changeover, the cleaner opens the app on their phone, picks the property, and starts a job.
-3. For every checklist item they capture a **before** and **after** photo and tick it done.
-4. Once every item is done with an after photo, they hit **Complete & send report**.
-5. The server generates a timestamped PDF (property, cleaner, per-item before/after photos with capture times) and emails it to the host if SMTP is configured — otherwise it's available to view/download immediately.
+1. Add your listings once (title, tags, description, category) — paste in what's currently live on Etsy.
+2. Each week, the **queue** surfaces the 5 listings that have gone longest without a refresh (never-refreshed listings first). The same 5 stay on the queue all week so progress is visible.
+3. Open a listing from the queue (or from **All listings**) to get a rewritten title, tags and opening line, shown side-by-side with the original, plus 2–3 seasonal keyword prompts for the current month (e.g. "Autumn", "Halloween Prep" in September).
+4. Tweak anything you don't like, then **Save refresh** — this updates the listing and marks it refreshed, so next week's queue pulls in different stale listings.
+5. The **Rewrite tool** does the same rewrite for any pasted listing without needing to save it first — handy for a listing you haven't added yet, or one-off polishing.
 
-This is a proof-of-concept: data is stored in a local JSON file and uploaded photos on disk, which is enough to validate the workflow with real cleaners before investing in a database/auth/multi-tenant backend.
+## The rewrite engine
+
+The rewriter is a rule-based heuristic, not a call to an LLM: it re-scores and reorders the words the seller already used (title, tags, description) using well-known Etsy SEO conventions — front-load the highest-signal keyword phrase, remove title/tag duplication, respect the 140-character title limit and the 13-tag/20-character tag limits, and weave in the current month's seasonal terms. See `server/rewrite.js`. It's intentionally simple so it's cheap to run and fully deterministic; swapping in a real AI rewrite call once the workflow is validated with real sellers is a drop-in replacement for that one module.
 
 ## Running it
 
@@ -23,33 +27,24 @@ npm install
 npm start
 ```
 
-Then open `http://localhost:3000`. A demo property ("Riverside Loft") is seeded so you can try a full changeover immediately.
-
-### Sending real emails (optional)
-
-Without SMTP configuration, completed reports are generated and downloadable, but not emailed — the app tells the cleaner to forward the PDF themselves. To enable emailing, set:
-
-```bash
-SMTP_HOST=smtp.example.com
-SMTP_PORT=587
-SMTP_USER=you@example.com
-SMTP_PASS=your-password
-SMTP_FROM=you@example.com   # optional, defaults to SMTP_USER
-```
+Then open `http://localhost:3000`. Eight demo listings are seeded with varying refresh history so the weekly queue and staleness sorting are visible immediately.
 
 ## What's intentionally out of scope for the MVP
 
-- Accounts/auth (anyone with the URL can add properties or run a changeover — fine for a pilot with one cleaner/agency, not for multi-tenant production)
+- Accounts/auth (anyone with the URL can add or refresh listings — fine for a solo seller pilot, not multi-tenant production)
 - A real database (JSON file storage; swap for Postgres/SQLite once validated)
-- Editing/deleting properties or re-opening a completed job
-- Push notifications, host-side dashboard, or payment/subscription billing
+- An actual Etsy API connection (listings are pasted in by hand rather than synced)
+- A true AI rewrite (the heuristic engine above; swap for an LLM call once validated)
+- Payment/subscription billing, email reminders when the weekly queue refreshes
 
 ## Project layout
 
 ```
-server/       Express API — properties, jobs, photo upload, PDF generation, email
+server/
+  index.js    Express API — listings, rewrite, weekly queue
+  db.js       JSON "database" load/save
+  rewrite.js  Heuristic title/tags/first-line rewriter + seasonal keyword map
+  queue.js    Weekly stale-listing queue selection
 public/       Vanilla JS single-page frontend (mobile-first, no build step)
-data/db.json  JSON "database" (properties + jobs)
-uploads/      Captured before/after photos
-reports/      Generated PDF reports
+data/db.json  JSON "database" (listings + this week's queue)
 ```
