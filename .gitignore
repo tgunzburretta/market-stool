@@ -1,7 +1,3 @@
 node_modules/
-uploads/*
-!uploads/.gitkeep
-reports/*
-!reports/.gitkeep
 .env
 *.log

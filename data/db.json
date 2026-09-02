@@ -1,24 +1,77 @@
 {
-  "properties": [
+  "listings": [
     {
-      "id": "prop_demo",
-      "name": "Riverside Loft",
-      "address": "12 Riverside Walk, London E1 6AA",
-      "hostName": "Priya Shah",
-      "hostEmail": "host@example.com",
-      "checklist": [
-        "Kitchen surfaces wiped & appliances clean",
-        "Fridge emptied of perishables",
-        "Bathroom(s) cleaned & restocked",
-        "Beds made with fresh linen",
-        "Bins emptied & new liners fitted",
-        "Floors vacuumed / mopped",
-        "Windows & mirrors streak-free",
-        "Rubbish & recycling taken out",
-        "Welcome items reset (towels, toiletries)",
-        "Final walkthrough — no damage or missing items"
-      ]
+      "id": "lst_dogmum",
+      "title": "Personalised Dog Mum Sweatshirt Custom Pet Name Jumper Gift",
+      "tags": ["dog mum gift", "personalised jumper", "custom pet name", "dog lover gift", "sweatshirt for her", "dog mom sweater"],
+      "description": "Soft unisex sweatshirt printed with your dog's name. Comes in 5 colours and sizes S-3XL. A lovely gift for any dog mum.",
+      "category": "Apparel",
+      "createdAt": "2025-11-01T09:00:00.000Z",
+      "lastRefreshedAt": null
+    },
+    {
+      "id": "lst_necklace",
+      "title": "Custom Name Necklace Sterling Silver Personalised Jewellery Gift for Her",
+      "tags": ["name necklace", "personalised jewellery", "sterling silver", "gift for her", "custom necklace", "bridesmaid gift"],
+      "description": "Handmade sterling silver necklace with any name or word. Adjustable chain, gift-boxed and ready to post.",
+      "category": "Jewellery",
+      "createdAt": "2025-09-12T09:00:00.000Z",
+      "lastRefreshedAt": "2025-10-15T10:00:00.000Z"
+    },
+    {
+      "id": "lst_catdad",
+      "title": "Funny Cat Dad T-Shirt Fathers Day Gift Mens Graphic Tee",
+      "tags": ["cat dad shirt", "fathers day gift", "funny cat tee", "mens graphic tee", "gift for him"],
+      "description": "Soft cotton tee for cat dads everywhere. Printed to order in the UK, ships next day.",
+      "category": "Apparel",
+      "createdAt": "2026-01-10T09:00:00.000Z",
+      "lastRefreshedAt": null
+    },
+    {
+      "id": "lst_macrame",
+      "title": "Boho Macrame Wall Hanging Large Woven Home Decor",
+      "tags": ["macrame wall hanging", "boho decor", "woven wall art", "large macrame", "home decor gift"],
+      "description": "Hand-knotted macrame wall hanging, 90cm long, made with natural cotton cord. Adds instant boho charm to any room.",
+      "category": "Home Decor",
+      "createdAt": "2025-05-04T09:00:00.000Z",
+      "lastRefreshedAt": "2026-06-01T09:00:00.000Z"
+    },
+    {
+      "id": "lst_guestbook",
+      "title": "Wedding Guest Book Alternative Wood Sign Rustic Drop Top",
+      "tags": ["wedding guest book", "drop top sign", "rustic wedding decor", "guest book alternative", "wooden wedding sign"],
+      "description": "A rustic wooden drop-top guest book alternative — guests write directly onto wooden hearts and drop them in the frame.",
+      "category": "Wedding",
+      "createdAt": "2025-03-20T09:00:00.000Z",
+      "lastRefreshedAt": "2025-08-20T09:00:00.000Z"
+    },
+    {
+      "id": "lst_tumbler",
+      "title": "Personalised Tumbler with Straw 20oz Custom Name Cup",
+      "tags": ["personalised tumbler", "custom name cup", "20oz tumbler", "gift for her", "birthday gift cup"],
+      "description": "Stainless steel tumbler with straw and lid, customised with any name. Keeps drinks cold for 24 hours.",
+      "category": "Drinkware",
+      "createdAt": "2025-12-01T09:00:00.000Z",
+      "lastRefreshedAt": "2026-08-25T09:00:00.000Z"
+    },
+    {
+      "id": "lst_halloweensvg",
+      "title": "Halloween Svg Bundle Spooky Png Cut Files Cricut",
+      "tags": ["halloween svg", "spooky png", "cricut cut file", "svg bundle", "digital download"],
+      "description": "20 spooky Halloween designs in SVG and PNG format, instant digital download for Cricut and Silhouette.",
+      "category": "Digital Download",
+      "createdAt": "2026-08-01T09:00:00.000Z",
+      "lastRefreshedAt": null
+    },
+    {
+      "id": "lst_ornament",
+      "title": "Christmas Ornament Personalised Family Name Bauble Gift",
+      "tags": ["christmas ornament", "personalised bauble", "family name gift", "custom christmas gift", "first christmas"],
+      "description": "Wooden Christmas bauble engraved with your family name and year, ready to hang or gift.",
+      "category": "Seasonal",
+      "createdAt": "2025-10-01T09:00:00.000Z",
+      "lastRefreshedAt": "2026-02-14T09:00:00.000Z"
     }
   ],
-  "jobs": []
+  "queue": null
 }
