@@ -1,0 +1,24 @@
+{
+  "properties": [
+    {
+      "id": "prop_demo",
+      "name": "Riverside Loft",
+      "address": "12 Riverside Walk, London E1 6AA",
+      "hostName": "Priya Shah",
+      "hostEmail": "host@example.com",
+      "checklist": [
+        "Kitchen surfaces wiped & appliances clean",
+        "Fridge emptied of perishables",
+        "Bathroom(s) cleaned & restocked",
+        "Beds made with fresh linen",
+        "Bins emptied & new liners fitted",
+        "Floors vacuumed / mopped",
+        "Windows & mirrors streak-free",
+        "Rubbish & recycling taken out",
+        "Welcome items reset (towels, toiletries)",
+        "Final walkthrough — no damage or missing items"
+      ]
+    }
+  ],
+  "jobs": []
+}
