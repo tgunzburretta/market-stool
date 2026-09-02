@@ -8,9 +8,14 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">Listing Refresh</div>
-    <div class="tagline">Rewrite stale Etsy &amp; print-on-demand listings, 5 minutes a week</div>
-    <nav class="tabs">
+    <div class="spread">
+      <div>
+        <div class="brand">Listing Refresh</div>
+        <div class="tagline">Rewrite stale Etsy &amp; print-on-demand listings, 5 minutes a week</div>
+      </div>
+      <div id="auth-status"></div>
+    </div>
+    <nav class="tabs" id="main-tabs" hidden>
       <a href="#/" data-tab="/">This week's queue</a>
       <a href="#/listings" data-tab="/listings">All listings</a>
       <a href="#/rewrite" data-tab="/rewrite">Rewrite tool</a>

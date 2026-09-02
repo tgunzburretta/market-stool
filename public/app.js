@@ -4,6 +4,9 @@ async function api(path, options = {}) {
   const res = await fetch(path, options);
   const isJson = (res.headers.get('content-type') || '').includes('application/json');
   const body = isJson ? await res.json() : null;
+  if (res.status === 401 && path !== '/api/me' && path !== '/api/login' && path !== '/api/signup') {
+    navigate('#/login');
+  }
   if (!res.ok) {
     const err = new Error((body && body.error) || `Request failed (${res.status})`);
     err.details = body;
@@ -56,10 +59,45 @@ async function seasonalBannerHtml() {
 window.addEventListener('hashchange', route);
 window.addEventListener('DOMContentLoaded', route);
 
-function route() {
-  const hash = window.location.hash || '#/';
-  const refreshMatch = hash.match(/^#\/refresh\/(.+)$/);
+function updateTopbarAuthState(me) {
+  const statusEl = document.getElementById('auth-status');
+  const tabsEl = document.getElementById('main-tabs');
+  if (!me) {
+    statusEl.innerHTML = '';
+    tabsEl.hidden = true;
+    return;
+  }
+  tabsEl.hidden = false;
+  statusEl.innerHTML = `
+    <span class="meta" style="color:#d7dce3;">${escapeHtml(me.email)}</span>
+    <button class="link-btn" id="logout-btn" style="color:#fff; margin-left:8px;">Log out</button>
+  `;
+  document.getElementById('logout-btn').addEventListener('click', async () => {
+    await api('/api/logout', { method: 'POST' });
+    updateTopbarAuthState(null);
+    navigate('#/login');
+  });
+}
 
+async function route() {
+  const hash = window.location.hash || '#/';
+
+  if (hash === '#/login' || hash === '#/signup') {
+    updateTopbarAuthState(null);
+    renderAuthForm(hash === '#/signup' ? 'signup' : 'login');
+    return;
+  }
+
+  let me;
+  try {
+    me = await api('/api/me');
+  } catch (err) {
+    navigate('#/login');
+    return;
+  }
+  updateTopbarAuthState(me);
+
+  const refreshMatch = hash.match(/^#\/refresh\/(.+)$/);
   let activeTab = hash;
   if (refreshMatch) activeTab = '/listings';
 
@@ -76,6 +114,53 @@ function route() {
   } else {
     renderQueue();
   }
+}
+
+// ---------- Login / signup ----------
+
+function renderAuthForm(mode) {
+  const isSignup = mode === 'signup';
+  appEl.innerHTML = `
+    <div class="card">
+      <h2>${isSignup ? 'Create your account' : 'Log in'}</h2>
+      <p class="meta">${isSignup ? 'One account per seller — your listings are private to you.' : 'Welcome back.'}</p>
+      <div class="field">
+        <label>Email</label>
+        <input type="email" id="f-email" placeholder="you@example.com" />
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input type="password" id="f-password" placeholder="${isSignup ? 'At least 8 characters' : 'Your password'}" />
+      </div>
+      <p class="error" id="f-error"></p>
+      <button class="btn block" id="f-submit">${isSignup ? 'Sign up' : 'Log in'}</button>
+      <p class="meta" style="margin-top:12px; text-align:center;">
+        ${isSignup ? 'Already have an account?' : "Don't have an account?"}
+        <a href="${isSignup ? '#/login' : '#/signup'}">${isSignup ? 'Log in' : 'Sign up'}</a>
+      </p>
+    </div>
+  `;
+
+  document.getElementById('f-submit').addEventListener('click', async () => {
+    const email = document.getElementById('f-email').value.trim();
+    const password = document.getElementById('f-password').value;
+    const errorEl = document.getElementById('f-error');
+    errorEl.textContent = '';
+    if (!email || !password) {
+      errorEl.textContent = 'Email and password are required.';
+      return;
+    }
+    try {
+      await api(isSignup ? '/api/signup' : '/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      navigate('#/'); // hash always changes here (form only renders on #/login or #/signup), so hashchange fires route()
+    } catch (err) {
+      errorEl.textContent = err.message;
+    }
+  });
 }
 
 // ---------- This week's queue ----------

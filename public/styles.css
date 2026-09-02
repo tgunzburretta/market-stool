@@ -27,6 +27,7 @@ body {
 .tagline { font-size: 13px; color: #b7c0cc; margin-top: 2px; }
 
 .tabs { display: flex; gap: 4px; margin-top: 14px; flex-wrap: wrap; }
+.tabs[hidden] { display: none; }
 .tabs a {
   color: #d7dce3;
   text-decoration: none;
